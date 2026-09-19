@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "link_recovery.h"
 #include "protocol.h"
 
 namespace Weyvelength {
@@ -60,6 +61,7 @@ namespace Weyvelength {
 		bool SendP2P(uint32_t id, const Proto::P2PMessage& msg); // direct to a room member; the first send builds the link, queued until it connects
 		bool NextP2P(uint32_t& from, Proto::P2PMessage& out); // one received datagram per call
 		bool PeerConnectedP2P(uint32_t id) const; // is a direct link to this member up right now?
+		LinkState PeerLinkState(uint32_t id) const; // the same question with the reason a link is not up
 
 		uint32_t Id() const;  // 0 until the server has assigned one
 		const std::string& Name() const; // our own name, as the server accepted it
@@ -94,13 +96,17 @@ namespace Weyvelength {
 		void ClearRoomState();
 
 		void PollPeers();
+		void RecoverLinks(); // applies link_recovery.h to every peer whose link is not up
 
 		PeerLink* FindLink(uint32_t id);
-		PeerLink* CreateLink(uint32_t id);
+		PeerLink* CreateLink(uint32_t id, LinkState state);
 
 		bool ShareLink(PeerLink& link, uint32_t id);
 		void FlushLink(PeerLink& link);
+		bool LinkStalled(const PeerLink& link) const; // the route is gone, sooner than juice says so
+		void MarkLinkDown(uint32_t id); // starts the drop clock, once
 
+		void RedialLink(uint32_t id);
 		void DestroyLink(uint32_t id);
 		void DestroyAllLinks();
 
@@ -111,6 +117,8 @@ namespace Weyvelength {
 
 		std::unique_ptr<ClientAsioImpl> _asio;
 		std::unique_ptr<P2PMesh> _mesh;
+
+		uint64_t _now_ms = 0; // stamped once per Poll, so every link decision shares one clock
 
 		Proto::IceServers _ice; // handed to us by the server; feeds every new link
 

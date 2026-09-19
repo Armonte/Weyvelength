@@ -144,6 +144,7 @@
     <ClInclude Include="include\weyvelength.h" />
     <ClInclude Include="include\private\client.h" />
     <ClInclude Include="include\private\marshal.h" />
+    <ClInclude Include="include\private\link_recovery.h" />
     <ClInclude Include="include\private\p2p_mesh.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

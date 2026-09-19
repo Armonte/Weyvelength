@@ -132,6 +132,7 @@
   <ItemGroup>
     <ClCompile Include="src\test_protocol.cpp" />
     <ClCompile Include="src\test_marshal.cpp" />
+    <ClCompile Include="src\test_link_recovery.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

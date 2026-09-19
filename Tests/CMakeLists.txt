@@ -1,7 +1,8 @@
 add_executable(
     Tests
     ${CMAKE_CURRENT_SOURCE_DIR}/src/test_protocol.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/test_marshal.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/test_marshal.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/test_link_recovery.cpp)
 target_include_directories(
     Tests
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../Client/include

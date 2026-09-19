@@ -5,10 +5,15 @@
 #include <cstring>
 
 // The p2p half of the client: a lazily built mesh of libjuice links,
-// signaled through the server as P2PSignal frames.
+// signaled through the server as P2PSignal frames. A link that drops is
+// recovered rather than mourned; link_recovery.h holds the rules and the
+// reasoning, RecoverLinks below applies them once per poll.
 namespace Weyvelength {
 
-	constexpr uint32_t max_connection_attempts = 3; // ICE tries per peer before we give up
+	// A link that is down still takes sends, and a redial can take seconds, so
+	// the queue needs a lid: coming back up with a minute of stale traffic to
+	// flush is worse for a real time application than having lost it.
+	constexpr size_t max_queued_messages = 256;
 
 	// Juice callbacks run on juice's threads; they only queue, Poll does the rest.
 	static void PushJuiceEvent(juice_agent_t* agent, void* user_ptr, JuiceEvent ev)
@@ -53,7 +58,7 @@ namespace Weyvelength {
 
 		PeerLink* link = FindLink(id);
 		if (!link) {
-			link = CreateLink(id); // lazy: the first message to a peer starts ICE
+			link = CreateLink(id, LinkState::Opening); // lazy: the first message to a peer starts ICE
 			if (!link)
 				return false;
 			if (!ShareLink(*link, id)) {
@@ -62,7 +67,11 @@ namespace Weyvelength {
 			}
 		}
 
+		link->send_ms = _now_ms; // half of the stall rule: we only call a silent route dead while we talk to it
+
 		if (!link->connected) {
+			if (link->outbox.size() >= max_queued_messages)
+				link->outbox.pop_front(); // keep the newest; a real time application wants the recent frames
 			link->outbox.push_back(msg); // flushed when the link comes up
 			return true;
 		}
@@ -83,8 +92,18 @@ namespace Weyvelength {
 
 	bool Client::PeerConnectedP2P(uint32_t id) const
 	{
-		auto it = _mesh->links.find(id);
-		return it != _mesh->links.end() && it->second.connected;
+		return PeerLinkState(id) == LinkState::Up;
+	}
+
+	// The recovery record exists for exactly as long as the link is not simply
+	// up, and carries the reason, so the two answers come from one place.
+	LinkState Client::PeerLinkState(uint32_t id) const
+	{
+		auto it = _mesh->recovery.find(id);
+		if (it != _mesh->recovery.end())
+			return it->second.state;
+
+		return _mesh->links.contains(id) ? LinkState::Up : LinkState::None;
 	}
 
 	PeerLink* Client::FindLink(uint32_t id)
@@ -93,10 +112,16 @@ namespace Weyvelength {
 		return it == _mesh->links.end() ? nullptr : &it->second;
 	}
 
-	PeerLink* Client::CreateLink(uint32_t id)
+	PeerLink* Client::CreateLink(uint32_t id, LinkState state)
 	{
-		if (_mesh->attempts[id] >= max_connection_attempts)
-			return nullptr; // gave up on this peer until it reconnects or the room resets
+		LinkRecovery& recovery = _mesh->recovery[id]; // outlives the link, so the budget survives a redial
+		if (recovery.attempts >= default_recovery_policy.max_attempts) {
+			recovery.state = LinkState::GaveUp; // gave up on this peer until it reconnects or the room resets
+			return nullptr;
+		}
+
+		recovery.state = state;
+		recovery.since_ms = _now_ms; // the policy times this round out from here
 
 		PeerLink link;
 		link.ctx = std::make_unique<JuiceCallbackContext>();
@@ -126,7 +151,7 @@ namespace Weyvelength {
 		if (!link.agent)
 			return nullptr;
 
-		_mesh->attempts[id]++; // count only agents that actually started an ICE round
+		recovery.attempts++; // count only agents that actually started an ICE round
 		return &_mesh->links.emplace(id, std::move(link)).first->second;
 	}
 
@@ -149,6 +174,41 @@ namespace Weyvelength {
 		link.outbox.clear();
 	}
 
+	bool Client::LinkStalled(const PeerLink& link) const
+	{
+		return RouteStalled(_now_ms - link.recv_ms, _now_ms - link.send_ms, link.heard, default_recovery_policy);
+	}
+
+	// One clock per peer, started at the first sign of trouble and carried
+	// across redials: a second report must not push the deadline back.
+	void Client::MarkLinkDown(uint32_t id)
+	{
+		auto [it, fresh] = _mesh->recovery.try_emplace(id);
+		if (fresh) {
+			it->second.since_ms = _now_ms;
+			it->second.state = LinkState::Recovering;
+		}
+	}
+
+	// The escalation, and the expensive half of recovery. libjuice has no ICE
+	// restart, so a route that is really gone can only be replaced by a whole
+	// new agent; what we do still have is the signaling channel, which is TCP
+	// and never dropped, so this is a re-signal and not a reconnect.
+	void Client::RedialLink(uint32_t id)
+	{
+		// A link that has never been up is still opening, however many rounds it takes.
+		const LinkState state = PeerLinkState(id) == LinkState::Opening ? LinkState::Opening : LinkState::Recovering;
+
+		DestroyLink(id);
+
+		PeerLink* link = CreateLink(id, state);
+		if (!link)
+			return; // out of budget; CreateLink has already recorded that
+
+		if (!ShareLink(*link, id))
+			DestroyLink(id); // the round is spent either way; the next sweep waits out its backoff
+	}
+
 	void Client::DestroyLink(uint32_t id)
 	{
 		auto it = _mesh->links.find(id);
@@ -165,7 +225,7 @@ namespace Weyvelength {
 			juice_destroy(link.agent);
 		}
 		_mesh->links.clear();
-		_mesh->attempts.clear();
+		_mesh->recovery.clear();
 	}
 
 	void Client::HandleP2PSignal(const Proto::P2PSignal& sig)
@@ -200,8 +260,8 @@ namespace Weyvelength {
 
 		bool answering = !link;
 		if (answering) {
-			_mesh->attempts.erase(sig.id); // an inbound dial proves the peer is alive; answering is always allowed
-			link = CreateLink(sig.id); // a peer reached out with no link of ours yet
+			_mesh->recovery.erase(sig.id); // an inbound dial proves the peer is alive; answering is always allowed
+			link = CreateLink(sig.id, LinkState::Opening); // a peer reached out with no link of ours yet
 			if (!link)
 				return;
 		}
@@ -227,6 +287,64 @@ namespace Weyvelength {
 			HandleJuiceEvent(ev);
 		}
 		events.clear(); // keeps its capacity for the next poll
+
+		RecoverLinks();
+	}
+
+	// Walks every peer whose link is not simply up and applies the policy. The
+	// verdicts that do nothing are the point: most drops are repaired by juice
+	// or by the peer, and a redial we did not have to make is a stall the
+	// application never saw.
+	void Client::RecoverLinks()
+	{
+		std::vector<uint32_t>& peers = _mesh->sweep;
+		peers.clear();
+		for (const auto& [id, link] : _mesh->links) {
+			peers.push_back(id);
+		}
+		for (const auto& [id, recovery] : _mesh->recovery) {
+			if (!_mesh->links.contains(id))
+				peers.push_back(id); // the record outlives the agent we gave up on
+		}
+
+		for (uint32_t id : peers) {
+			const PeerLink* link = FindLink(id);
+			const bool up = link && link->connected && !LinkStalled(*link);
+			if (!up)
+				MarkLinkDown(id); // a stall starts the clock here; juice would not call it for another 30 s
+
+			auto recovery = _mesh->recovery.find(id);
+			if (recovery == _mesh->recovery.end())
+				continue; // up, and nothing was ever wrong with it
+
+			LinkStatus status;
+			status.member = std::ranges::find(_members, id) != _members.end();
+			status.up = up;
+			status.attempts = recovery->second.attempts;
+			status.dialer = DialsFirst(_id, id);
+			status.down_ms = _now_ms - recovery->second.since_ms;
+
+			switch (DecideLink(status, default_recovery_policy)) {
+			case LinkAction::Healthy:
+				_mesh->recovery.erase(recovery); // it came back on its own; nothing was spent
+				break;
+			case LinkAction::Redial:
+				RedialLink(id);
+				break;
+			case LinkAction::GiveUp:
+				DestroyLink(id); // the agent is dead weight now; the record keeps refusing the peer
+				recovery->second.state = LinkState::GaveUp;
+				break;
+			case LinkAction::Drop:
+				DestroyLink(id);
+				_mesh->recovery.erase(recovery); // not a member any more; there is nothing to reach
+				break;
+			case LinkAction::Hold:
+			case LinkAction::Answer:
+			case LinkAction::Wait:
+				break; // juice, or the peer, or the backoff, is on it
+			}
+		}
 	}
 
 	void Client::HandleJuiceEvent(JuiceEvent& ev)
@@ -246,6 +364,8 @@ namespace Weyvelength {
 			SendServer(Proto::P2PSignal{ ev.peer, Proto::P2PSignalKind::GatheringDone, {} });
 			break;
 		case JuiceEvent::Kind::Recv:
+			link->heard = true; // the other half of the stall rule: only a route that answered can go silent
+			link->recv_ms = _now_ms;
 			_p2p_inbox.emplace(ev.peer, std::move(ev.payload));
 			break;
 		}
@@ -257,14 +377,21 @@ namespace Weyvelength {
 		case JUICE_STATE_CONNECTED:
 		case JUICE_STATE_COMPLETED:
 			link.connected = true;
-			_mesh->attempts.erase(ev.peer); // success clears the budget; a later drop retries fresh
+			link.recv_ms = _now_ms; // a route that has just come up has not gone silent
+			_mesh->recovery.erase(ev.peer); // success clears the budget; a later drop retries fresh
 			FlushLink(link);
 			break;
 		case JUICE_STATE_DISCONNECTED:
 			link.connected = false; // may still recover; sends queue meanwhile
+			MarkLinkDown(ev.peer);
 			break;
 		case JUICE_STATE_FAILED:
-			DestroyLink(ev.peer); // the next SendP2P retries, up to max_connection_attempts
+			// The agent is not destroyed here any more. juice keeps reading its
+			// socket after a failure and keeps learning peer reflexive candidates
+			// from the peer's checks, so a link whose route moved can pair up
+			// again on its own; RecoverLinks holds it open for that first.
+			link.connected = false;
+			MarkLinkDown(ev.peer);
 			break;
 		default:
 			break;

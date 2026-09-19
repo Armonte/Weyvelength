@@ -174,6 +174,11 @@ bool weyve_peer_connected(WeyveClient* client, uint32_t id)
 	return client->client.PeerConnectedP2P(id);
 }
 
+WeyveLinkState weyve_peer_link_state(const WeyveClient* client, uint32_t id)
+{
+	return (WeyveLinkState)client->client.PeerLinkState(id);
+}
+
 // --- cached room state ---
 
 uint32_t weyve_id(const WeyveClient* client)

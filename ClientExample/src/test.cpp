@@ -167,6 +167,30 @@ static void SendP2PCommand(WeyveClient* client, const std::string& args)
 		std::cout << "p2p send to client " << id << " failed\n";
 }
 
+// "/links"; what every member's direct link is doing right now.
+static void PrintLinksCommand(WeyveClient* client)
+{
+	uint32_t count = 0;
+	const uint32_t* members = weyve_members(client, &count);
+	const uint32_t self = weyve_id(client);
+
+	for (uint32_t i = 0; i < count; ++i) {
+		if (members[i] == self)
+			continue;
+
+		const char* state = "?";
+		switch (weyve_peer_link_state(client, members[i])) {
+		case WEYVE_LINK_NONE: state = "none, nothing sent yet"; break;
+		case WEYVE_LINK_OPENING: state = "opening"; break;
+		case WEYVE_LINK_UP: state = "up"; break;
+		case WEYVE_LINK_RECOVERING: state = "recovering, sends are queued"; break;
+		case WEYVE_LINK_GAVE_UP: state = "gave up"; break;
+		}
+
+		std::cout << "client " << members[i] << ": " << state << "\n";
+	}
+}
+
 // "KEY VALUE" split in two; the value may contain spaces.
 static bool SplitKeyValue(const std::string& args, std::string& key, std::string& value)
 {
@@ -252,7 +276,7 @@ static int RunChat(WeyveClient* client, const std::string& code, const std::stri
 				std::cout << "Commands: /who, /set KEY VALUE, /del KEY, /setme KEY VALUE, /delme KEY\n";
 				std::cout << "          /open, /close, /pass [PASSWORD], /kick ID, /ban ID, /host ID, /leave\n";
 				std::cout << "          /list [KEY [VALUE]], /listed, /unlisted, /pub KEY VALUE, /unpub KEY\n";
-				std::cout << "          /p2p ID TEXT (direct, over the mesh)\n";
+				std::cout << "          /p2p ID TEXT (direct, over the mesh), /links\n";
 				break;
 			}
 			case WEYVE_EVENT_ROOM_ERROR:
@@ -374,6 +398,8 @@ static int RunChat(WeyveClient* client, const std::string& code, const std::stri
 				weyve_transfer_host(client, ParseId(line.substr(6)));
 			else if (line.rfind("/p2p ", 0) == 0)
 				SendP2PCommand(client, line.substr(5));
+			else if (line == "/links")
+				PrintLinksCommand(client);
 			else
 				weyve_send_chat(client, line.c_str());
 		}

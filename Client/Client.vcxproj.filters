@@ -38,6 +38,9 @@
     <ClInclude Include="include\private\marshal.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="include\private\link_recovery.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="include\private\p2p_mesh.h">
       <Filter>Header Files</Filter>
     </ClInclude>

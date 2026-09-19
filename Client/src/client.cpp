@@ -5,6 +5,7 @@
 #endif // _WIN32
 
 #include <array>
+#include <chrono>
 #include <span>
 #include <vector>
 
@@ -22,6 +23,16 @@ namespace Weyvelength {
 		std::vector<std::byte> rx_msg; // fragments of the message being reassembled
 		std::vector<std::byte> tx;   // framed bytes queued to send
 	};
+
+	namespace {
+		// Monotonic, and never zero, so a stamp that was never set reads as long ago.
+		uint64_t SteadyMs()
+		{
+			using namespace std::chrono;
+			static const steady_clock::time_point base = steady_clock::now();
+			return (uint64_t)duration_cast<milliseconds>(steady_clock::now() - base).count() + 1;
+		}
+	}
 
 	Client::Client() :
 		_asio(std::make_unique<ClientAsioImpl>()),
@@ -53,6 +64,8 @@ namespace Weyvelength {
 	{
 		if (!_asio->socket.is_open())
 			return false;
+
+		_now_ms = SteadyMs(); // one timestamp for the whole poll; every link decision shares it
 
 		if (!DrainServer() || !CarveServer())
 			return false;
@@ -378,7 +391,7 @@ namespace Weyvelength {
 				_names.erase(left->id);
 				_member_data.erase(left->id);
 				DestroyLink(left->id); // no member, no mesh link
-				_mesh->attempts.erase(left->id); // and no grudge if they rejoin
+				_mesh->recovery.erase(left->id); // and no grudge if they rejoin
 			}
 		}
 		else if (auto* host = std::get_if<Proto::HostChanged>(&msg)) {

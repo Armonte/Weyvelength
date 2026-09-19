@@ -205,11 +205,25 @@ WEYVE_API bool weyve_delete_member_data(WeyveClient* client, const char* key);
 
 // --- peer to peer ---
 
+// How a direct link to a room member is doing. A link that drops is not given
+// up on while the peer is still in the room: the control channel says they are
+// there, so the client holds the connection open in case it repairs itself,
+// then re-signals a fresh one, backing off between tries. Mirrors LinkState.
+typedef enum WeyveLinkState {
+	WEYVE_LINK_NONE = 0, // no link; the next weyve_send_p2p opens one
+	WEYVE_LINK_OPENING, // the first negotiation for this peer is running
+	WEYVE_LINK_UP, // datagrams go straight to the peer
+	WEYVE_LINK_RECOVERING, // it dropped; sends queue, newest kept, while the link is rebuilt
+	WEYVE_LINK_GAVE_UP, // out of tries; weyve_send_p2p fails until the peer leaves and rejoins
+} WeyveLinkState;
+
 WEYVE_API bool weyve_send_p2p(WeyveClient* client, uint32_t id, const void* data, uint32_t len); // first send builds the link
 // One received datagram; returns its bytes or null when none are queued. The
 // buffer borrows client-owned storage, valid until the next weyve_next_p2p call.
 WEYVE_API const uint8_t* weyve_next_p2p(WeyveClient* client, uint32_t* from, uint32_t* len);
 WEYVE_API bool weyve_peer_connected(WeyveClient* client, uint32_t id); // is a direct link up right now?
+// The same question with the reason: WEYVE_LINK_UP is exactly weyve_peer_connected.
+WEYVE_API WeyveLinkState weyve_peer_link_state(const WeyveClient* client, uint32_t id);
 
 // --- cached room state ---
 // Getters below read the client's cache; nothing blocks or hits the network.

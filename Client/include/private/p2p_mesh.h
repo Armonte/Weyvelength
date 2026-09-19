@@ -11,6 +11,8 @@
 
 #include <juice/juice.h>
 
+#include "link_recovery.h"
+
 // Client-internal state behind the p2p mesh; keeps juice types out of the API.
 namespace Weyvelength {
 	struct JuiceEvent { // one callback crossing from juice's threads into Poll
@@ -32,7 +34,16 @@ namespace Weyvelength {
 		std::unique_ptr<JuiceCallbackContext> ctx;
 		bool remote_set = false; // juice_set_remote_description may only run once
 		bool connected = false;
+		bool heard = false; // the peer has sent us at least one datagram over this agent
+		uint64_t recv_ms = 0; // last datagram in, and last out; the two together spot a dead route
+		uint64_t send_ms = 0; // before juice does, see RouteStalled
 		std::deque<std::vector<std::byte>> outbox; // datagrams queued until the link connects
+	};
+
+	struct LinkRecovery { // one peer's ICE budget and drop clock; outlives the link, so a redial keeps both
+		uint32_t attempts = 0; // ICE rounds spent on this peer
+		uint64_t since_ms = 0; // when the current round, or the drop, started
+		LinkState state = LinkState::Recovering; // Opening, Recovering or GaveUp; the record is erased once the link is up
 	};
 
 	struct P2PMesh {
@@ -40,6 +51,7 @@ namespace Weyvelength {
 		std::vector<JuiceEvent> events; // juice callbacks push, PollPeers drains
 		std::vector<JuiceEvent> scratch; // the drained batch; reused so capacity sticks
 		std::map<uint32_t, PeerLink> links;
-		std::map<uint32_t, uint32_t> attempts; // per-peer ICE tries; outlives links to cap retries
+		std::map<uint32_t, LinkRecovery> recovery; // exactly the peers whose link is not simply up
+		std::vector<uint32_t> sweep; // the ids RecoverLinks walks; reused so capacity sticks
 	};
 }

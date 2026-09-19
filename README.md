@@ -7,6 +7,8 @@ The server hosts rooms. Clients create or join one by code, and the server keeps
 
 The server also carries the ICE signaling between room members, and [libjuice](https://github.com/paullouisageneau/libjuice) uses it to open direct UDP connections through NATs. Peers are addressed by id, a link is negotiated on the first message sent to a peer, and the payload format is left to the application. Application traffic never passes through the server.
 
+Because the signaling channel is TCP and outlives the links it opens, a peer whose NAT mapping moves mid session does not have to be lost: the server still lists both sides, so the link is re-signaled in place. `weyve_peer_link_state` reports where that has got to.
+
 ## Project Goals
 ### Done
 - Rooms
@@ -27,6 +29,9 @@ The server also carries the ICE signaling between room members, and [libjuice](h
 	- ICE negotiation forwarded through the server, no signaling service of your own
 	- Configurable STUN/TURN servers, handed to clients by the server
 	- Credentials that rotate while the server keeps running
+	- Recovery from a dropped link, for a peer who is still in the room: the connection is held
+	  open in case it repairs itself, then re-signaled through the server, backing off between
+	  tries and giving up out loud rather than retrying forever
 - Poll based event system, no callbacks across the C boundary
 - Automated builds for Windows, Linux and macOS
 
