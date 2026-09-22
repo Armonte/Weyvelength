@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "weyvelength.h"
 
 #include <string>
@@ -177,6 +178,16 @@ bool weyve_peer_connected(WeyveClient* client, uint32_t id)
 WeyveLinkState weyve_peer_link_state(const WeyveClient* client, uint32_t id)
 {
 	return (WeyveLinkState)client->client.PeerLinkState(id);
+}
+
+bool weyve_peer_route(const WeyveClient* client, uint32_t id, char* local, uint32_t local_cap, char* remote,
+                      uint32_t remote_cap)
+{
+	std::string l, r;
+	const bool ok = client->client.PeerRoute(id, l, r);
+	if (local && local_cap) { std::snprintf(local, local_cap, "%s", l.c_str()); }
+	if (remote && remote_cap) { std::snprintf(remote, remote_cap, "%s", r.c_str()); }
+	return ok;
 }
 
 // --- cached room state ---

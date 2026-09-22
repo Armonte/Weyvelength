@@ -224,6 +224,11 @@ WEYVE_API const uint8_t* weyve_next_p2p(WeyveClient* client, uint32_t* from, uin
 WEYVE_API bool weyve_peer_connected(WeyveClient* client, uint32_t id); // is a direct link up right now?
 // The same question with the reason: WEYVE_LINK_UP is exactly weyve_peer_connected.
 WEYVE_API WeyveLinkState weyve_peer_link_state(const WeyveClient* client, uint32_t id);
+// The route a link actually uses: the selected local and remote ICE candidate TYPES ("host", "srflx", "prflx",
+// "relay"), NUL-terminated. False (and empty strings) while no pair is selected. "relay" on either side means the
+// traffic goes through a TURN server -- the path two players behind strict NATs are forced onto.
+WEYVE_API bool weyve_peer_route(const WeyveClient* client, uint32_t id, char* local, uint32_t local_cap,
+                                char* remote, uint32_t remote_cap);
 
 // --- cached room state ---
 // Getters below read the client's cache; nothing blocks or hits the network.

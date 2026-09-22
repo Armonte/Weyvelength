@@ -62,6 +62,7 @@ namespace Weyvelength {
 		bool NextP2P(uint32_t& from, Proto::P2PMessage& out); // one received datagram per call
 		bool PeerConnectedP2P(uint32_t id) const; // is a direct link to this member up right now?
 		LinkState PeerLinkState(uint32_t id) const; // the same question with the reason a link is not up
+		bool PeerRoute(uint32_t id, std::string& local, std::string& remote) const; // selected candidate types
 
 		uint32_t Id() const;  // 0 until the server has assigned one
 		const std::string& Name() const; // our own name, as the server accepted it

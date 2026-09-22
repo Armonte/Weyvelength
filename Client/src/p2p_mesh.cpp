@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <cstdlib>
 #include "client.h"
 #include "p2p_mesh.h"
 
@@ -228,6 +230,37 @@ namespace Weyvelength {
 		_mesh->recovery.clear();
 	}
 
+	static bool RelayOnly()
+	{
+		static const bool on = [] { const char* e = std::getenv("WEYVE_RELAY_ONLY"); return e && e[0] == '1'; }();
+		return on;
+	}
+
+	// The type token of an ICE candidate line ("a=candidate:... typ relay raddr ..."): host/srflx/prflx/relay.
+	static std::string CandidateType(const char* line)
+	{
+		const char* t = std::strstr(line, " typ ");
+		if (!t) return {};
+		t += 5;
+		std::string out;
+		while (*t && *t != ' ' && out.size() < 8) out += *t++;
+		return out;
+	}
+
+	bool Client::PeerRoute(uint32_t id, std::string& local, std::string& remote) const
+	{
+		local.clear();
+		remote.clear();
+		auto it = _mesh->links.find(id);
+		if (it == _mesh->links.end() || !it->second.agent) return false;
+		char l[JUICE_MAX_CANDIDATE_SDP_STRING_LEN] = {}, r[JUICE_MAX_CANDIDATE_SDP_STRING_LEN] = {};
+		if (juice_get_selected_candidates(it->second.agent, l, sizeof l, r, sizeof r) != JUICE_ERR_SUCCESS)
+			return false;
+		local = CandidateType(l);
+		remote = CandidateType(r);
+		return !local.empty() && !remote.empty();
+	}
+
 	void Client::HandleP2PSignal(const Proto::P2PSignal& sig)
 	{
 		PeerLink* link = FindLink(sig.id);
@@ -237,6 +270,11 @@ namespace Weyvelength {
 			HandleP2PDescription(link, sig);
 			break;
 		case Proto::P2PSignalKind::Candidate:
+			// WEYVE_RELAY_ONLY=1 -- a TEST knob: keep only the peer's TURN relay candidates, so the only pairs
+			// that can form go relay-to-relay through the TURN server. It lets two clients on ONE machine exercise
+			// the path two players behind strict NATs are forced onto, which otherwise no local run can reach.
+			if (link && RelayOnly() && sig.payload.find(" typ relay") == std::string::npos)
+				break;
 			if (link)
 				juice_add_remote_candidate(link->agent, sig.payload.c_str());
 			break;
