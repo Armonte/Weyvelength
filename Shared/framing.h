@@ -45,6 +45,18 @@ namespace Weyvelength::Proto {
 		return frames;
 	}
 
+	// Decodes one reassembled message. zpp_bits reads a string/vector's wire
+	// length and resizes the container to it BEFORE checking that those bytes
+	// exist, so without a limit a ~20-byte frame claiming a 4 GB string makes
+	// the receiver allocate (and zero) 4 GB per field. No container in a
+	// message can legitimately exceed the reassembled message, so that is the
+	// allocation cap. Every decode of untrusted bytes goes through here.
+	template <typename Message>
+	inline bool DecodeMessage(std::span<const std::byte> body, Message& msg)
+	{
+		return !failure(zpp::bits::in{ body, zpp::bits::alloc_limit<max_reassembled_size>() }(msg));
+	}
+
 	// Splits a frame header into its fragment length and more-fragments flag.
 	// False if the bytes are unreadable or the length exceeds max_message_size.
 	inline bool DecodeFrameHeader(std::span<const std::byte> header, uint32_t& len, bool& more)

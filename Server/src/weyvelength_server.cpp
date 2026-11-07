@@ -196,7 +196,7 @@ namespace Weyvelength {
 				continue;   // wait for the rest of the message
 
 			Proto::ServerMessage msg;
-			if (failure(zpp::bits::in{ body }(msg)))
+			if (!Proto::DecodeMessage(body, msg))
 				co_return;
 			body.clear();
 

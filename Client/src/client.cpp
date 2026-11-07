@@ -317,7 +317,7 @@ namespace Weyvelength {
 				continue;   // wait for the rest of the message
 
 			Proto::ServerMessage msg;
-			bool bad = failure(zpp::bits::in{ impl.rx_msg }(msg));
+			bool bad = !Proto::DecodeMessage(impl.rx_msg, msg);
 			impl.rx_msg.clear();
 			if (bad)
 				return DisconnectServer();

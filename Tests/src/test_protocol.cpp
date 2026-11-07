@@ -354,3 +354,32 @@ TEST_CASE("frame headers over the cap are rejected, reassembly is capped")
 	std::array<std::byte, 20> extra{};
 	CHECK(!Proto::AppendFragment(body, extra)); // one byte over the reassembly cap fails
 }
+
+// A frame that claims a huge string length must be refused before anything is
+// allocated (zpp_bits resizes to the wire length before reading the bytes).
+TEST_CASE("DecodeMessage refuses a container length the message cannot hold")
+{
+	Proto::ServerMessage in = Proto::AssignRoomId{ "abc" };
+	std::vector<std::byte> body;
+	zpp::bits::out{ body }(in).or_throw();
+
+	// locate the string's u32 length prefix (3) right before "abc" and forge it
+	size_t at = 0;
+	for (size_t i = 0; i + 7 <= body.size(); ++i)
+		if (body[i] == std::byte{ 3 } && body[i + 1] == std::byte{ 0 } && body[i + 2] == std::byte{ 0 } && body[i + 3] == std::byte{ 0 } &&
+		    body[i + 4] == std::byte{ 'a' })
+			at = i + 1;
+	REQUIRE(at != 0);
+	--at;
+	for (int b = 0; b < 4; ++b)
+		body[at + b] = std::byte{ 0xF0 };   // 0xF0F0F0F0 bytes
+
+	Proto::ServerMessage out;
+	CHECK(!Proto::DecodeMessage(body, out));
+
+	// the honest message still decodes
+	std::vector<std::byte> good;
+	zpp::bits::out{ good }(in).or_throw();
+	REQUIRE(Proto::DecodeMessage(good, out));
+	CHECK(std::get<Proto::AssignRoomId>(out).id == "abc");
+}
