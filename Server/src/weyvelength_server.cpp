@@ -97,6 +97,8 @@ namespace Weyvelength {
 
 		spdlog::info("Listening on port {}", config.port);
 		LogIceServers(_config.ice);
+		if (_config.extension)
+			_config.extension->OnAttach(*this);
 		return true;
 	}
 
@@ -125,6 +127,39 @@ namespace Weyvelength {
 			spdlog::info("Ice servers swapped, told {} client(s)", _connections.size());
 			LogIceServers(_config.ice);
 		});
+	}
+
+	bool Server::SendExtension(uint32_t id, const Proto::Extension& msg)
+	{
+		auto it = _connections.find(id);
+		if (it == _connections.end() || !it->second->extension || it->second->closing)
+			return false; // never to a client that has not shown it can decode one
+		SendTo(id, msg);
+		return true;
+	}
+
+	const Connection* Server::FindConnection(uint32_t id) const
+	{
+		auto it = _connections.find(id);
+		return it == _connections.end() ? nullptr : it->second.get();
+	}
+
+	const Room* Server::FindRoom(const std::string& id) const
+	{
+		auto it = _rooms.find(id);
+		return it == _rooms.end() ? nullptr : &it->second;
+	}
+
+	uint16_t Server::Port() const
+	{
+		asio::error_code ec;
+		auto endpoint = _acceptor.local_endpoint(ec);
+		return ec ? 0 : endpoint.port();
+	}
+
+	void Server::Post(std::function<void()> fn)
+	{
+		asio::post(_context, std::move(fn));
 	}
 
 	asio::awaitable<void> Server::AcceptLoop()
@@ -168,6 +203,8 @@ namespace Weyvelength {
 
 		conn->socket.close(ec);
 		LeaveRoom(conn);
+		if (_config.extension)
+			_config.extension->OnDisconnect(conn->id);
 		_connections.erase(conn->id);
 		ReleaseId(conn->id);
 
@@ -234,7 +271,16 @@ namespace Weyvelength {
 	void Server::HandleMessage(std::shared_ptr<Connection> conn, const Proto::ServerMessage& msg)
 	{
 		if (auto* ping = std::get_if<Proto::Heartbeat>(&msg)) {
+			// the capability probe: the extension speaks first, so its Extension lands ahead of the echo
+			if (ping->timestamp == Proto::extension_probe_timestamp && _config.extension && !conn->extension) {
+				conn->extension = true;
+				_config.extension->OnHello(conn->id);
+			}
 			SendTo(conn->id, Proto::Heartbeat{ ping->timestamp });
+		}
+		else if (auto* ext = std::get_if<Proto::Extension>(&msg)) {
+			if (conn->extension && _config.extension) // unprobed or no extension: ignored, as by an older server
+				_config.extension->OnExtension(conn->id, *ext);
 		}
 		else if (std::get_if<Proto::CreateRoom>(&msg)) {
 			HandleCreateRoom(conn);
@@ -330,6 +376,9 @@ namespace Weyvelength {
 		SendTo(conn->id, Proto::HostChanged{ conn->id }); // the host cache has a single source: this event
 
 		spdlog::info("Client {} created room {}", conn->id, code);
+
+		if (_config.extension)
+			_config.extension->OnJoined(conn->id, _rooms.at(code));
 	}
 
 	void Server::HandleJoinRoom(const std::shared_ptr<Connection>& conn, const Proto::JoinRoom& msg)
@@ -359,6 +408,13 @@ namespace Weyvelength {
 		if (!room.password.empty() && msg.password != room.password) {
 			SendTo(conn->id, Proto::RoomError{ Proto::RoomErrorCode::BadPassword, msg.id });
 			return;
+		}
+
+		if (_config.extension) {
+			if (std::optional<Proto::RoomErrorCode> refused = _config.extension->CheckJoin(conn->id, room)) {
+				SendTo(conn->id, Proto::RoomError{ *refused, msg.id });
+				return;
+			}
 		}
 
 		SendToMany(room.members, Proto::PeerJoined{ conn->id, conn->name });
@@ -393,6 +449,9 @@ namespace Weyvelength {
 		conn->room = msg.id;
 
 		spdlog::info("Client {} joined room {}", conn->id, msg.id);
+
+		if (_config.extension)
+			_config.extension->OnJoined(conn->id, room);
 	}
 
 	void Server::HandleLeaveRoom(const std::shared_ptr<Connection>& conn)
@@ -741,6 +800,8 @@ namespace Weyvelength {
 		for (const auto& [code, room] : _rooms) {
 			if (!room.listed)
 				continue;
+			if (_config.extension && !_config.extension->CanSeeRoom(conn->id, room))
+				continue;
 
 			// filter first: a miss never pays for its own copy
 			if (!std::ranges::all_of(msg.filters, [&](const Proto::RoomFilter& filter) { return MatchesFilter(room.listing, filter); }))
@@ -785,6 +846,10 @@ namespace Weyvelength {
 			if (room.members.empty()) {
 				_rooms.erase(it);
 				spdlog::info("Room {} closed", conn->room);
+				if (_config.extension) {
+					_config.extension->OnLeft(conn->id, conn->room);
+					_config.extension->OnRoomClosed(conn->room);
+				}
 			}
 			else {
 				SendToMany(room.members, Proto::PeerLeft{ conn->id });
@@ -793,6 +858,8 @@ namespace Weyvelength {
 					SendToMany(room.members, Proto::HostChanged{ room.host });
 					spdlog::info("Client {} now hosts room {}", room.host, conn->room);
 				}
+				if (_config.extension)
+					_config.extension->OnLeft(conn->id, conn->room);
 			}
 		}
 		conn->room.clear();

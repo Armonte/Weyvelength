@@ -8,8 +8,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -20,11 +22,36 @@
 
 namespace Weyvelength {
 
+	struct Room;
+	struct Server;
+
+	// An application's policy, plugged into the server without forking it: the
+	// Extension message channel plus the few decisions an application may need
+	// to add to (who sees a listed room, who may join one). Every hook runs on
+	// the server's single io thread, so an implementation needs no locking as
+	// long as it only touches its own state from hooks or from Server::Post.
+	// The defaults change nothing: a server with no extension, or with this
+	// base class, behaves exactly as the plain server does.
+	struct ServerExtension {
+		virtual ~ServerExtension() = default;
+		virtual void OnAttach(Server& server) { (void)server; } // from Init, once
+		virtual void OnHello(uint32_t id) { (void)id; } // the connection sent the probe; send your first Extension now
+		virtual void OnExtension(uint32_t id, const Proto::Extension& msg) { (void)id; (void)msg; }
+		virtual void OnDisconnect(uint32_t id) { (void)id; } // after the room was left
+		// A refusal code turns the join away exactly like the server's own checks; nullopt lets it through.
+		virtual std::optional<Proto::RoomErrorCode> CheckJoin(uint32_t id, const Room& room) { (void)id; (void)room; return std::nullopt; }
+		virtual bool CanSeeRoom(uint32_t viewer, const Room& room) { (void)viewer; (void)room; return true; } // ListRooms
+		virtual void OnJoined(uint32_t id, const Room& room) { (void)id; (void)room; } // create or join, after the hydrate
+		virtual void OnLeft(uint32_t id, const std::string& room) { (void)id; (void)room; } // any exit: leave, kick, ban, drop
+		virtual void OnRoomClosed(const std::string& room) { (void)room; }
+	};
+
 	struct ServerConfig {
 		uint16_t port = 0;
 		uint32_t room_code_length = 0; // 0 = use the default (8)
 		uint32_t room_list_cooldown_ms = 0; // 0 = use the default (1000)
 		Proto::IceServers ice; // stun/turn handed to every client on connect
+		ServerExtension* extension = nullptr; // not owned; must outlive the server
 	};
 
 	struct Connection {
@@ -37,6 +64,7 @@ namespace Weyvelength {
 		asio::steady_timer wake; // cancel() signals "out has work"
 		bool closing = false;
 		std::chrono::steady_clock::time_point last_list{}; // epoch = never asked
+		bool extension = false; // sent the probe to a server with an extension: may be sent Extension messages
 
 		Connection(uint32_t id, asio::ip::tcp::socket socket)
 			: id(id), socket(std::move(socket)), wake(this->socket.get_executor()) {
@@ -66,6 +94,17 @@ namespace Weyvelength {
 		// Swaps the set and pushes it to everyone connected; a no-op swap sends
 		// nothing. Safe from any thread. Existing links keep their old config.
 		void SetIceServers(const Proto::IceServers& ice);
+
+		// --- for a ServerExtension (io thread only, except Post) ---
+		// Queues an Extension for a connection that sent the probe; false (nothing sent) for any other.
+		bool SendExtension(uint32_t id, const Proto::Extension& msg);
+		const Connection* FindConnection(uint32_t id) const; // null once gone
+		const Room* FindRoom(const std::string& id) const; // null when no such room
+		const std::unordered_map<std::string, Room>& Rooms() const { return _rooms; }
+		size_t ConnectionCount() const { return _connections.size(); }
+		uint16_t Port() const; // the bound port (useful after Init with port 0); 0 before Init
+		asio::io_context& Context() { return _context; }
+		void Post(std::function<void()> fn); // runs fn on the io thread; safe from any thread
 
 	private:
 		void SendTo(uint32_t id, const Proto::ServerMessage& msg);

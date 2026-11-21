@@ -20,7 +20,7 @@ using namespace Weyvelength;
 // The wire encodes a message as its variant index, so the order below IS the
 // protocol. These pins turn the append-only comment in protocol.h into a
 // compile error: inserting or reordering an alternative fails right here.
-static_assert(std::variant_size_v<Proto::ServerMessage> == 32);
+static_assert(std::variant_size_v<Proto::ServerMessage> == 33);
 static_assert(std::is_same_v<std::variant_alternative_t<0, Proto::ServerMessage>, Proto::Heartbeat>);
 static_assert(std::is_same_v<std::variant_alternative_t<1, Proto::ServerMessage>, Proto::AssignClientId>);
 static_assert(std::is_same_v<std::variant_alternative_t<2, Proto::ServerMessage>, Proto::AssignRoomId>);
@@ -53,6 +53,7 @@ static_assert(std::is_same_v<std::variant_alternative_t<28, Proto::ServerMessage
 static_assert(std::is_same_v<std::variant_alternative_t<29, Proto::ServerMessage>, Proto::ListRooms>);
 static_assert(std::is_same_v<std::variant_alternative_t<30, Proto::ServerMessage>, Proto::RoomList>);
 static_assert(std::is_same_v<std::variant_alternative_t<31, Proto::ServerMessage>, Proto::SetName>);
+static_assert(std::is_same_v<std::variant_alternative_t<32, Proto::ServerMessage>, Proto::Extension>);
 
 // Same idea for the error enum: the values are wire bytes, append only.
 static_assert((uint8_t)Proto::RoomErrorCode::AlreadyInRoom == 0);
@@ -115,6 +116,14 @@ TEST_CASE("heartbeat round trips with its timestamp")
 {
 	auto out = std::get<Proto::Heartbeat>(RoundTrip(Proto::Heartbeat{ 0x1122334455667788 }));
 	CHECK(out.timestamp == 0x1122334455667788);
+}
+
+TEST_CASE("extension round trips with its kind and opaque bytes")
+{
+	std::string body("\x00\x01\xff text", 8);
+	auto out = std::get<Proto::Extension>(RoundTrip(Proto::Extension{ 0xC0FFEE, body }));
+	CHECK(out.kind == 0xC0FFEE);
+	CHECK(out.body == body);
 }
 
 TEST_CASE("identity and room assignment round trip")

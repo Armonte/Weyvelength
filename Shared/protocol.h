@@ -168,6 +168,22 @@ namespace Weyvelength::Proto {
 		bool operator==(const IceServers&) const = default;
 	};
 
+	// An opaque application channel, both directions: `kind` and `body` are the
+	// application's own (PovertyCaster's lobby service speaks over it). A server
+	// sends one ONLY to a connection that has shown it understands the message
+	// (a Heartbeat carrying extension_probe_timestamp), and a client sends one
+	// only after the server answered that probe with an Extension of its own, so
+	// a client or server built before this message existed never meets it. A
+	// server without an extension ignores both the probe and the message.
+	struct Extension {
+		uint32_t kind = 0;
+		std::string body;
+	};
+	// "WEYVEXT1": a Heartbeat with this timestamp asks "do you speak Extension?".
+	// The server echoes the heartbeat as always; one that does sends its first
+	// Extension BEFORE the echo, so an echo with no Extension ahead of it means no.
+	constexpr uint64_t extension_probe_timestamp = 0x5745595645585431ull;
+
 	// All traffic on the server connection, both directions. Only append new
 	// messages: zpp_bits encodes the variant index, so inserting in the middle
 	// breaks peers built against the old order.
@@ -175,7 +191,7 @@ namespace Weyvelength::Proto {
 		LeaveRoom, PeerJoined, PeerLeft, HostChanged, SetRoomData, RoomDataChanged, SetMemberData, MemberDataChanged,
 		KickMember, TransferHost, SetRoomJoinable, SetRoomPassword, KickedByHost, RoomAccessChanged, BanMember, BannedByHost,
 		P2PSignal, IceServers, SetRoomListed, RoomListedChanged, SetRoomListing, RoomListingChanged, ListRooms, RoomList,
-		SetName>;
+		SetName, Extension>;
 
 	// Opaque bytes, one datagram per message; the app defines its own encoding.
 	using P2PMessage = std::vector<std::byte>;

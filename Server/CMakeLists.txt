@@ -1,6 +1,7 @@
 add_executable(
     Server
     ${CMAKE_CURRENT_SOURCE_DIR}/src/weyvelength_server.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/server_main.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp)
 target_include_directories(
     Server

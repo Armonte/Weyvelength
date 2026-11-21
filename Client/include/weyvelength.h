@@ -76,6 +76,7 @@ typedef enum WeyveEventType {
 	WEYVE_EVENT_ROOM_LISTED_CHANGED,
 	WEYVE_EVENT_ROOM_LISTING_CHANGED, // one listing slot; empty value means cleared
 	WEYVE_EVENT_ROOM_LIST, // a weyve_list_rooms reply landed; read it with the accessors below
+	WEYVE_EVENT_EXTENSION, // an application Extension message (see weyve_send_extension)
 } WeyveEventType;
 
 // One decoded server message. String pointers borrow client-owned storage and
@@ -152,6 +153,12 @@ typedef struct WeyveEvent {
 		struct { // WEYVE_EVENT_ROOM_LIST
 			uint32_t count;
 		} room_list;
+
+		struct { // WEYVE_EVENT_EXTENSION
+			uint32_t kind;
+			const uint8_t* body;
+			uint32_t body_len;
+		} extension;
 	} data;
 } WeyveEvent;
 
@@ -165,6 +172,15 @@ WEYVE_API bool weyve_poll(WeyveClient* client); // instant, non-blocking; false 
 WEYVE_API bool weyve_next(WeyveClient* client, WeyveEvent* out); // one queued event per call; false when drained
 
 WEYVE_API bool weyve_send_heartbeat(WeyveClient* client, uint64_t timestamp); // server pongs it back
+
+// --- application extension channel (Proto::Extension) ---
+// Opaque kind + bytes, for an application whose server runs a ServerExtension.
+// NEVER send one before the server has said it understands them: send a
+// heartbeat with WEYVE_EXTENSION_PROBE; a server with an extension sends a
+// WEYVE_EVENT_EXTENSION before echoing that heartbeat, any other server just
+// echoes it. A server that predates the message drops the connection on one.
+#define WEYVE_EXTENSION_PROBE 0x5745595645585431ull
+WEYVE_API bool weyve_send_extension(WeyveClient* client, uint32_t kind, const void* body, uint32_t len);
 
 // --- identity ---
 

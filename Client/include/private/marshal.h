@@ -144,6 +144,12 @@ namespace Weyvelength::Marshal {
 			out->data.room_listing.value = listing->value.data();
 			out->data.room_listing.value_len = (uint32_t)listing->value.size();
 		}
+		else if (auto* ext = std::get_if<Proto::Extension>(&msg)) {
+			out->type = WEYVE_EVENT_EXTENSION;
+			out->data.extension.kind = ext->kind;
+			out->data.extension.body = (const uint8_t*)ext->body.data();
+			out->data.extension.body_len = (uint32_t)ext->body.size();
+		}
 		else if (auto* list = std::get_if<Proto::RoomList>(&msg)) {
 			// the rooms come from the client's cache; no union member could carry them
 			out->type = WEYVE_EVENT_ROOM_LIST;

@@ -139,12 +139,14 @@
   <ItemGroup>
     <ClCompile Include="src\weyvelength_server.cpp" />
     <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\server_main.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="vcpkg.json" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\weyvelength_server.h" />
+    <ClInclude Include="include\weyvelength_server_main.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

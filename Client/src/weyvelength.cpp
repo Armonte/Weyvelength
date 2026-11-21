@@ -56,6 +56,14 @@ bool weyve_send_heartbeat(WeyveClient* client, uint64_t timestamp)
 	return client->client.SendServer(Proto::Heartbeat{ timestamp });
 }
 
+bool weyve_send_extension(WeyveClient* client, uint32_t kind, const void* body, uint32_t len)
+{
+	Proto::Extension msg{ kind, {} };
+	if (body && len)
+		msg.body.assign((const char*)body, len);
+	return client->client.SendServer(msg);
+}
+
 // --- identity ---
 
 bool weyve_set_name(WeyveClient* client, const char* name)

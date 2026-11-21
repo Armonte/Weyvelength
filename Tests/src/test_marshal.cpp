@@ -12,7 +12,8 @@ using namespace Weyvelength;
 
 // A new alternative that reaches the client needs a case in FillEvent, or it
 // falls through to false; these pins flag a variant or error-enum change.
-static_assert(std::variant_size_v<Proto::ServerMessage> == 32);
+static_assert(std::variant_size_v<Proto::ServerMessage> == 33);
+static_assert(WEYVE_EXTENSION_PROBE == Proto::extension_probe_timestamp);
 static_assert((int)WEYVE_ROOM_ERROR_ALREADY_IN_ROOM == (int)Proto::RoomErrorCode::AlreadyInRoom);
 
 // The C header restates these rather than including protocol.h, so pin the copies.
@@ -166,6 +167,16 @@ TEST_CASE("room listing notices map to their events")
 	Proto::ServerMessage empty = Proto::RoomList{};
 	REQUIRE(Marshal::FillEvent(empty, &e));
 	CHECK(e.data.room_list.count == 0);
+}
+
+TEST_CASE("an extension message surfaces with its kind and bytes")
+{
+	WeyveEvent e{};
+	Proto::ServerMessage ext = Proto::Extension{ 7, "body" };
+	REQUIRE(Marshal::FillEvent(ext, &e));
+	CHECK(e.type == WEYVE_EVENT_EXTENSION);
+	CHECK(e.data.extension.kind == 7);
+	CHECK(std::string_view((const char*)e.data.extension.body, e.data.extension.body_len) == "body");
 }
 
 TEST_CASE("client->server and transport variants are not surfaced")
