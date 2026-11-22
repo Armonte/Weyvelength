@@ -12,7 +12,7 @@ using namespace Weyvelength;
 
 // A new alternative that reaches the client needs a case in FillEvent, or it
 // falls through to false; these pins flag a variant or error-enum change.
-static_assert(std::variant_size_v<Proto::ServerMessage> == 32);
+static_assert(std::variant_size_v<Proto::ServerMessage> == 33);
 static_assert((int)WEYVE_ROOM_ERROR_ALREADY_IN_ROOM == (int)Proto::RoomErrorCode::AlreadyInRoom);
 
 // The C header restates these rather than including protocol.h, so pin the copies.

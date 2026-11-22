@@ -111,6 +111,43 @@ namespace Weyvelength {
 		_context.stop();
 	}
 
+	void Server::SetAllowedBuilds(std::map<std::string, std::set<std::string>> builds)
+	{
+		asio::post(_context, [this, b = std::move(builds)]() mutable {
+			if (b == _builds)
+				return;
+			_builds = std::move(b);
+			for (const auto& [game, set] : _builds)
+				spdlog::info("Build gate: {} admits {} build(s){}", game, set.size(), set.empty() ? "" : ": " + *set.begin() + (set.size() > 1 ? " ..." : ""));
+			if (_builds.empty())
+				spdlog::info("Build gate: off (no gated game)");
+		});
+	}
+
+	bool Server::BuildAllowed(const Connection& conn, const std::string& game) const
+	{
+		auto it = _builds.find(game);
+		if (it == _builds.end())
+			return true; // not a gated game
+		return conn.game == game && it->second.contains(conn.build);
+	}
+
+	void Server::HandleDeclareBuild(const std::shared_ptr<Connection>& conn, const Proto::DeclareBuild& msg)
+	{
+		if (msg.game.empty() || msg.game.size() > Proto::max_declared_game || msg.build.size() > Proto::max_declared_build) {
+			SendTo(conn->id, Proto::RoomError{ Proto::RoomErrorCode::BadRoomData, msg.game });
+			return;
+		}
+		conn->game = msg.game;
+		conn->build = msg.build;
+		if (!BuildAllowed(*conn, conn->game)) { // told at once, so the client can say "update" before anyone hosts or joins
+			spdlog::info("Client {} declared {} build \"{}\": refused by the build gate", conn->id, conn->game, conn->build);
+			SendTo(conn->id, Proto::RoomError{ Proto::RoomErrorCode::BuildRefused, conn->game });
+			return;
+		}
+		spdlog::debug("Client {} declared {} build \"{}\"", conn->id, conn->game, conn->build);
+	}
+
 	void Server::SetIceServers(const Proto::IceServers& ice)
 	{
 		asio::post(_context, [this, ice]() {
@@ -254,6 +291,9 @@ namespace Weyvelength {
 		else if (auto* name = std::get_if<Proto::SetName>(&msg)) {
 			HandleSetName(conn, *name);
 		}
+		else if (auto* declared = std::get_if<Proto::DeclareBuild>(&msg)) {
+			HandleDeclareBuild(conn, *declared);
+		}
 		else if (auto* set = std::get_if<Proto::SetRoomData>(&msg)) {
 			HandleSetRoomData(conn, *set);
 		}
@@ -320,11 +360,17 @@ namespace Weyvelength {
 			return;
 		}
 
+		if (!conn->game.empty() && !BuildAllowed(*conn, conn->game)) {
+			SendTo(conn->id, Proto::RoomError{ Proto::RoomErrorCode::BuildRefused, conn->game });
+			return;
+		}
+
 		std::string code = MakeRoomCode(_config.room_code_length);
 		while (_rooms.contains(code))
 			code = MakeRoomCode(_config.room_code_length);
 
 		_rooms.emplace(code, Room{ code, conn->id, { conn->id } });
+		_rooms.find(code)->second.game = conn->game;
 		conn->room = code;
 		SendTo(conn->id, Proto::AssignRoomId{ code });
 		SendTo(conn->id, Proto::HostChanged{ conn->id }); // the host cache has a single source: this event
@@ -346,6 +392,14 @@ namespace Weyvelength {
 		}
 
 		Room& room = it->second;
+		{	// the build gate: the room's game is what its host declared, else what it lists, else what the joiner declared
+			auto listed = room.listing.find("game");
+			const std::string& game = !room.game.empty() ? room.game : listed != room.listing.end() ? listed->second : conn->game;
+			if (!game.empty() && !BuildAllowed(*conn, game)) {
+				SendTo(conn->id, Proto::RoomError{ Proto::RoomErrorCode::BuildRefused, game });
+				return;
+			}
+		}
 		if (std::ranges::find(room.banned_members, conn->id) != room.banned_members.end()) {
 			SendTo(conn->id, Proto::RoomError{ Proto::RoomErrorCode::Banned, msg.id });
 			return;
@@ -666,6 +720,10 @@ namespace Weyvelength {
 			SendTo(conn->id, Proto::RoomError{ Proto::RoomErrorCode::BadRoomData, msg.key });
 			return;
 		}
+		if (msg.key == "game" && !msg.value.empty() && !BuildAllowed(*conn, msg.value)) { // the build gate: no listing under a gated game from an old build
+			SendTo(conn->id, Proto::RoomError{ Proto::RoomErrorCode::BuildRefused, msg.value });
+			return;
+		}
 
 		if (msg.value.empty()) { // empty value = clear
 			if (room.listing.erase(msg.key) == 0)
@@ -734,6 +792,12 @@ namespace Weyvelength {
 		if (!ValidListRooms(msg)) {
 			SendTo(conn->id, Proto::RoomError{ Proto::RoomErrorCode::BadRoomData, {} });
 			return;
+		}
+		for (const auto& filter : msg.filters) { // the build gate: an old build does not browse a gated game's rooms either
+			if (filter.key == "game" && filter.op == Proto::RoomFilterOp::Equals && !BuildAllowed(*conn, filter.value)) {
+				SendTo(conn->id, Proto::RoomError{ Proto::RoomErrorCode::BuildRefused, filter.value });
+				return;
+			}
 		}
 
 		Proto::RoomList list;

@@ -42,6 +42,7 @@ typedef enum WeyveRoomError {
 	WEYVE_ROOM_ERROR_BAD_PASSWORD, // wrong password on join, or an over-long one on set
 	WEYVE_ROOM_ERROR_BANNED, // the host has barred this client from the room
 	WEYVE_ROOM_ERROR_RATE_LIMITED, // asked again too soon; retry later
+	WEYVE_ROOM_ERROR_BUILD_REFUSED, // this build of a gated game is not allowed online (context = the game); update
 } WeyveRoomError;
 
 // Mirrors Proto::RoomFilterOp.
@@ -172,6 +173,11 @@ WEYVE_API bool weyve_send_heartbeat(WeyveClient* client, uint64_t timestamp); //
 // it right after connecting; in a room it fails with ALREADY_IN_ROOM. Null or ""
 // resets to WEYVE_DEFAULT_NAME, over WEYVE_MAX_NAME bytes is clamped.
 WEYVE_API bool weyve_set_name(WeyveClient* client, const char* name);
+
+// Which game and build we are. A server that gates the game admits only its
+// current builds: an old one gets WEYVE_ROOM_ERROR_BUILD_REFUSED at once and
+// again at every room request. Send it right after connecting.
+WEYVE_API bool weyve_declare_build(WeyveClient* client, const char* game, const char* build);
 
 // --- rooms ---
 

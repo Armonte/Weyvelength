@@ -6,6 +6,10 @@
 #include <fstream>
 #include <mutex>
 #include <iostream>
+#include <map>
+#include <set>
+#include <sstream>
+#include <filesystem>
 #include <string>
 #include <thread>
 #include <vector>
@@ -28,6 +32,8 @@ static void PrintUsage()
 		"  --stun-host HOST             default stun.l.google.com; empty disables it\n"
 		"  --stun-port PORT             default 19302\n"
 		"  --turn HOST:PORT:USER:PASS   repeatable\n"
+		"  --builds-file PATH           the build gate: one line per gated game, `game build [build...]`;\n"
+		"                               reread when the file changes (every 5 s); a game not listed is open\n"
 		"  --ice-file PATH              read stun/turn from a file and reread it as it expires,\n"
 		"                               replacing --stun-host, --stun-port and --turn\n";
 }
@@ -179,6 +185,53 @@ static void RefreshIce(std::stop_token stop, Server& server, std::string path)
 	}
 }
 
+// --builds-file: `game build [build...]` per line, `#` comments. Rereads follow the file's mtime.
+static bool ReadBuildsFile(const std::string& path, std::map<std::string, std::set<std::string>>& out)
+{
+	std::ifstream in(path);
+	if (!in)
+		return false;
+	std::map<std::string, std::set<std::string>> builds;
+	std::string line;
+	while (std::getline(in, line)) {
+		if (auto hash = line.find('#'); hash != std::string::npos)
+			line.erase(hash);
+		std::istringstream fields(line);
+		std::string game;
+		if (!(fields >> game))
+			continue;
+		auto& set = builds[game];
+		for (std::string build; fields >> build;)
+			set.insert(build);
+	}
+	out = std::move(builds);
+	return true;
+}
+
+static void RefreshBuilds(std::stop_token stop, Server& server, std::string path)
+{
+	std::mutex mutex;
+	std::condition_variable_any idle;
+	std::filesystem::file_time_type seen{};
+	while (!stop.stop_requested()) {
+		std::error_code ec;
+		const auto stamp = std::filesystem::last_write_time(path, ec);
+		if (!ec && stamp != seen) {
+			std::map<std::string, std::set<std::string>> builds;
+			if (ReadBuildsFile(path, builds)) {
+				seen = stamp;
+				server.SetAllowedBuilds(std::move(builds));
+			} else {
+				spdlog::warn("Could not read {}, keeping the current build gate", path);
+			}
+		}
+		std::unique_lock lock{ mutex };
+		idle.wait_for(lock, stop, std::chrono::seconds(5), [] { return false; });
+	}
+}
+
+static std::string g_builds_path; // --builds-file
+
 static bool ParseArgs(int argc, char* argv[], ServerConfig& config, std::string& ice_path)
 {
 	for (int i = 1; i < argc; i++) {
@@ -198,6 +251,8 @@ static bool ParseArgs(int argc, char* argv[], ServerConfig& config, std::string&
 			config.ice.stun_host = next();
 		} else if (arg == "--stun-port") {
 			config.ice.stun_port = (uint16_t)std::strtoul(next(), nullptr, 10);
+		} else if (arg == "--builds-file") {
+			g_builds_path = next();
 		} else if (arg == "--ice-file") {
 			ice_path = next();
 		} else if (arg == "--turn") {
@@ -252,6 +307,18 @@ int main(int argc, char* argv[])
 	std::jthread refresh;
 	if (!ice_path.empty())
 		refresh = std::jthread{ RefreshIce, std::ref(server), ice_path };
+
+	// The build gate: a bad file at startup fails loudly, later rereads keep the previous gate.
+	std::jthread builds_refresh;
+	if (!g_builds_path.empty()) {
+		std::map<std::string, std::set<std::string>> builds;
+		if (!ReadBuildsFile(g_builds_path, builds)) {
+			std::cout << "could not read --builds-file " << g_builds_path << "\n";
+			return 1;
+		}
+		server.SetAllowedBuilds(std::move(builds));
+		builds_refresh = std::jthread{ RefreshBuilds, std::ref(server), g_builds_path };
+	}
 
 	server.Run();   // blocks, driving the accept/ping/read coroutines
 	return 0;

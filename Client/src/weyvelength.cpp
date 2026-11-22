@@ -63,6 +63,11 @@ bool weyve_set_name(WeyveClient* client, const char* name)
 	return client->client.SetName(Marshal::Str(name));
 }
 
+bool weyve_declare_build(WeyveClient* client, const char* game, const char* build)
+{
+	return client->client.DeclareBuild(Marshal::Str(game), Marshal::Str(build));
+}
+
 // --- rooms ---
 
 bool weyve_create_room(WeyveClient* client)

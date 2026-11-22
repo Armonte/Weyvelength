@@ -27,6 +27,7 @@ namespace Weyvelength::Proto {
 		BadPassword, // wrong password on join, or an over-long one on set
 		Banned, // the host has barred this client from the room
 		RateLimited, // asked again too soon; retry later
+		BuildRefused, // the declared build of a gated game is not allowed online (context = the game); update
 	};
 
 	struct CreateRoom {}; // client -> server: create a room and join it
@@ -60,6 +61,16 @@ namespace Weyvelength::Proto {
 	// client -> server: set our display name; empty resets it to the default.
 	// Refused while in a room, so no rename event is needed.
 	struct SetName { std::string name; };
+
+	// client -> server: which game and build this client is. A game the server gates (its --builds-file) admits only the builds
+	// listed for it: a connection with another build, or none declared, is refused at create / join / listing / list with
+	// BuildRefused. Games not in the file are untouched. Send it once after connecting, before any room request.
+	struct DeclareBuild {
+		std::string game;
+		std::string build;
+	};
+	constexpr uint32_t max_declared_game = 64;
+	constexpr uint32_t max_declared_build = 128;
 
 	struct SetRoomData { // client -> server: set one room metadata key; empty value deletes it
 		std::string key;
@@ -175,7 +186,7 @@ namespace Weyvelength::Proto {
 		LeaveRoom, PeerJoined, PeerLeft, HostChanged, SetRoomData, RoomDataChanged, SetMemberData, MemberDataChanged,
 		KickMember, TransferHost, SetRoomJoinable, SetRoomPassword, KickedByHost, RoomAccessChanged, BanMember, BannedByHost,
 		P2PSignal, IceServers, SetRoomListed, RoomListedChanged, SetRoomListing, RoomListingChanged, ListRooms, RoomList,
-		SetName>;
+		SetName, DeclareBuild>;
 
 	// Opaque bytes, one datagram per message; the app defines its own encoding.
 	using P2PMessage = std::vector<std::byte>;
