@@ -10,6 +10,7 @@
 #include <deque>
 #include <functional>
 #include <map>
+#include <set>
 #include <memory>
 #include <optional>
 #include <string>
@@ -65,6 +66,7 @@ namespace Weyvelength {
 		bool closing = false;
 		std::chrono::steady_clock::time_point last_list{}; // epoch = never asked
 		bool extension = false; // sent the probe to a server with an extension: may be sent Extension messages
+		std::string game, build; // DeclareBuild; empty = never declared
 
 		Connection(uint32_t id, asio::ip::tcp::socket socket)
 			: id(id), socket(std::move(socket)), wake(this->socket.get_executor()) {
@@ -84,6 +86,7 @@ namespace Weyvelength {
 		std::vector<uint32_t> banned_members; // ids barred from joining; checked on join
 		bool listed = false;
 		std::map<std::string, std::string> listing; // what non-members can read and filter on
+		std::string game; // the host's declared game at creation (the build gate on joins to unlisted rooms)
 	};
 
 	struct Server {
@@ -94,6 +97,9 @@ namespace Weyvelength {
 		// Swaps the set and pushes it to everyone connected; a no-op swap sends
 		// nothing. Safe from any thread. Existing links keep their old config.
 		void SetIceServers(const Proto::IceServers& ice);
+		// The build gate: game -> the builds allowed online. A game absent from the map is open to every build.
+		// Safe from any thread; applies to the next request of every connection.
+		void SetAllowedBuilds(std::map<std::string, std::set<std::string>> builds);
 
 		// --- for a ServerExtension (io thread only, except Post) ---
 		// Queues an Extension for a connection that sent the probe; false (nothing sent) for any other.
@@ -118,6 +124,8 @@ namespace Weyvelength {
 		void HandleRoomChat(const std::shared_ptr<Connection>& conn, const Proto::RoomChat& msg);
 		void HandleP2PSignal(const std::shared_ptr<Connection>& conn, const Proto::P2PSignal& msg);
 		void HandleSetName(const std::shared_ptr<Connection>& conn, const Proto::SetName& msg);
+		void HandleDeclareBuild(const std::shared_ptr<Connection>& conn, const Proto::DeclareBuild& msg);
+		bool BuildAllowed(const Connection& conn, const std::string& game) const; // false = the game is gated and this connection's declared build is not on its list
 		void HandleSetRoomData(const std::shared_ptr<Connection>& conn, const Proto::SetRoomData& msg);
 		void HandleSetMemberData(const std::shared_ptr<Connection>& conn, const Proto::SetMemberData& msg);
 		void HandleKickMember(const std::shared_ptr<Connection>& conn, const Proto::KickMember& msg);
@@ -151,5 +159,6 @@ namespace Weyvelength {
 		uint32_t _next_slot = 1;   // slots never yet handed out; 0 reserved as "none"
 
 		ServerConfig _config;
+		std::map<std::string, std::set<std::string>> _builds; // the build gate (SetAllowedBuilds)
 	};
 }

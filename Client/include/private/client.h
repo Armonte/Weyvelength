@@ -35,6 +35,7 @@ namespace Weyvelength {
 		bool SendServer(const Proto::ServerMessage& msg);
 
 		bool SetName(const std::string& name); // rejected while in a room; empty resets to the default
+		bool DeclareBuild(const std::string& game, const std::string& build); // the server replies RoomError BuildRefused when the build is not allowed
 
 		bool CreateRoom(); // server replies AssignRoomId or RoomError
 		bool JoinRoom(const std::string& id, const std::string& password = {}); // server replies AssignRoomId or RoomError

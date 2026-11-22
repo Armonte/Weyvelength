@@ -96,6 +96,11 @@ namespace Weyvelength {
 		return SendServer(Proto::SetName{ name });
 	}
 
+	bool Client::DeclareBuild(const std::string& game, const std::string& build)
+	{
+		return SendServer(Proto::DeclareBuild{ game, build });
+	}
+
 	bool Client::CreateRoom()
 	{
 		return SendServer(Proto::CreateRoom{});

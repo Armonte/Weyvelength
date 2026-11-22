@@ -20,7 +20,7 @@ using namespace Weyvelength;
 // The wire encodes a message as its variant index, so the order below IS the
 // protocol. These pins turn the append-only comment in protocol.h into a
 // compile error: inserting or reordering an alternative fails right here.
-static_assert(std::variant_size_v<Proto::ServerMessage> == 33);
+static_assert(std::variant_size_v<Proto::ServerMessage> == 34);
 static_assert(std::is_same_v<std::variant_alternative_t<0, Proto::ServerMessage>, Proto::Heartbeat>);
 static_assert(std::is_same_v<std::variant_alternative_t<1, Proto::ServerMessage>, Proto::AssignClientId>);
 static_assert(std::is_same_v<std::variant_alternative_t<2, Proto::ServerMessage>, Proto::AssignRoomId>);
@@ -53,7 +53,8 @@ static_assert(std::is_same_v<std::variant_alternative_t<28, Proto::ServerMessage
 static_assert(std::is_same_v<std::variant_alternative_t<29, Proto::ServerMessage>, Proto::ListRooms>);
 static_assert(std::is_same_v<std::variant_alternative_t<30, Proto::ServerMessage>, Proto::RoomList>);
 static_assert(std::is_same_v<std::variant_alternative_t<31, Proto::ServerMessage>, Proto::SetName>);
-static_assert(std::is_same_v<std::variant_alternative_t<32, Proto::ServerMessage>, Proto::Extension>);
+static_assert(std::is_same_v<std::variant_alternative_t<32, Proto::ServerMessage>, Proto::DeclareBuild>);
+static_assert(std::is_same_v<std::variant_alternative_t<33, Proto::ServerMessage>, Proto::Extension>);
 
 // Same idea for the error enum: the values are wire bytes, append only.
 static_assert((uint8_t)Proto::RoomErrorCode::AlreadyInRoom == 0);
@@ -66,6 +67,7 @@ static_assert((uint8_t)Proto::RoomErrorCode::RoomClosed == 6);
 static_assert((uint8_t)Proto::RoomErrorCode::BadPassword == 7);
 static_assert((uint8_t)Proto::RoomErrorCode::Banned == 8);
 static_assert((uint8_t)Proto::RoomErrorCode::RateLimited == 9);
+static_assert((uint8_t)Proto::RoomErrorCode::BuildRefused == 10);
 
 // And the p2p signal kinds.
 static_assert((uint8_t)Proto::P2PSignalKind::Description == 0);
@@ -186,6 +188,16 @@ TEST_CASE("room access events round trip")
 	auto access = std::get<Proto::RoomAccessChanged>(RoundTrip(Proto::RoomAccessChanged{ false, true }));
 	CHECK(access.open == false);
 	CHECK(access.passworded == true);
+}
+
+TEST_CASE("a declared build round trips with its game, and the refusal carries the game")
+{
+	auto d = std::get<Proto::DeclareBuild>(RoundTrip(Proto::DeclareBuild{ "eneins", "df6b992e1b" }));
+	CHECK(d.game == "eneins");
+	CHECK(d.build == "df6b992e1b");
+	auto e = std::get<Proto::RoomError>(RoundTrip(Proto::RoomError{ Proto::RoomErrorCode::BuildRefused, "eneins" }));
+	CHECK(e.code == Proto::RoomErrorCode::BuildRefused);
+	CHECK(e.context == "eneins");
 }
 
 TEST_CASE("client names round trip on every message that carries one")
